@@ -1,7 +1,9 @@
-# Kanban
+# Kanban App in Rust
 
 A small, native kanban board for Linux desktops, written in Rust with [egui](https://github.com/emilk/egui).
 It doesn't need a server, an account or a database: your board is one readable JSON file.
+
+I was tired of seeing all these kanban apps that either don't satisfty my needs out of a kanban organizer or they run some bloated web based app like Electron. So I decided I needed one made my way.
 
 ## Features
 
@@ -99,3 +101,9 @@ Makefile               build, install, deb, rpm and arch targets
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+## AI Usage
+
+Real Good AI REAL Rating
+
+[![alt text](4rr.png)](https://www.realgoodai.org/real-rating)
