@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Kanban
+GenericName=Kanban Board
+Comment=Simple kanban board for organizing tasks
+Exec=kanban
+Icon=kanban
+Terminal=false
+Categories=Office;ProjectManagement;Utility;
+Keywords=todo;tasks;board;kanban;
+StartupWMClass=kanban

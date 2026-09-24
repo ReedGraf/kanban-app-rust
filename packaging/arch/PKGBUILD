@@ -1,0 +1,29 @@
+# Maintainer: Reed Graf
+# Builds from the local source checkout (two directories up).
+pkgname=kanban
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="A simple native kanban board"
+arch=('x86_64' 'aarch64')
+url="https://github.com/ReedGraf/kanban-app-rust"
+license=('MIT')
+depends=('gcc-libs' 'glibc' 'libxkbcommon' 'wayland' 'libglvnd' 'libx11' 'libxcursor' 'libxrandr' 'libxi')
+makedepends=('cargo')
+options=('!lto' '!debug')
+
+_srcroot="$(realpath "${startdir:-.}/../..")"
+
+build() {
+  cd "$_srcroot"
+  export CARGO_TARGET_DIR="$srcdir/target"
+  cargo build --release --locked
+}
+
+package() {
+  cd "$_srcroot"
+  install -Dm755 "$srcdir/target/release/kanban" "$pkgdir/usr/bin/kanban"
+  install -Dm644 assets/kanban.desktop "$pkgdir/usr/share/applications/kanban.desktop"
+  install -Dm644 assets/kanban.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/kanban.svg"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/kanban/README.md"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/kanban/LICENSE"
+}
