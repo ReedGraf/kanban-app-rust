@@ -22,8 +22,8 @@ build() {
 package() {
   cd "$_srcroot"
   install -Dm755 "$srcdir/target/release/kanban" "$pkgdir/usr/bin/kanban"
-  install -Dm644 assets/kanban.desktop "$pkgdir/usr/share/applications/kanban.desktop"
-  install -Dm644 assets/kanban.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/kanban.svg"
+  install -Dm644 assets/io.github.reedgraf.kanban.desktop "$pkgdir/usr/share/applications/io.github.reedgraf.kanban.desktop"
+  install -Dm644 assets/io.github.reedgraf.kanban.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/io.github.reedgraf.kanban.svg"
   install -Dm644 README.md "$pkgdir/usr/share/doc/kanban/README.md"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/kanban/LICENSE"
 }

@@ -81,6 +81,12 @@ make install PREFIX=$HOME/.local
 
 To remove it, run `make uninstall` with the same `PREFIX`. You can also just run `cargo run --release` without installing.
 
+**Running without installing:** Wayland only shows an app's icon if a matching launcher (`.desktop` file) is installed.
+So when you run the binary straight from a build folder, it writes a launcher and icon for your user to
+`~/.local/share/applications/io.github.reedgraf.kanban.desktop` and `~/.local/share/icons/hicolor/scalable/apps/`.
+It skips this when the app is installed from a package, and it never overwrites a launcher it didn't create.
+Delete those two files to remove it.
+
 ### Runtime requirements
 
 The app draws with OpenGL and works on both Wayland and X11. It needs `libxkbcommon`, `libwayland-client` and/or `libX11`,

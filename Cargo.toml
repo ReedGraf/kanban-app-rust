@@ -30,16 +30,16 @@ extended-description = "A simple native kanban board with columns, due dates, co
 depends = "$auto, libxkbcommon0, libwayland-client0, libgl1"
 assets = [
     ["target/release/kanban", "usr/bin/", "755"],
-    ["assets/kanban.desktop", "usr/share/applications/", "644"],
-    ["assets/kanban.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
+    ["assets/io.github.reedgraf.kanban.desktop", "usr/share/applications/", "644"],
+    ["assets/io.github.reedgraf.kanban.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
     ["README.md", "usr/share/doc/kanban/README", "644"],
 ]
 
 [package.metadata.generate-rpm]
 assets = [
     { source = "target/release/kanban", dest = "/usr/bin/kanban", mode = "755" },
-    { source = "assets/kanban.desktop", dest = "/usr/share/applications/kanban.desktop", mode = "644" },
-    { source = "assets/kanban.svg", dest = "/usr/share/icons/hicolor/scalable/apps/kanban.svg", mode = "644" },
+    { source = "assets/io.github.reedgraf.kanban.desktop", dest = "/usr/share/applications/io.github.reedgraf.kanban.desktop", mode = "644" },
+    { source = "assets/io.github.reedgraf.kanban.svg", dest = "/usr/share/icons/hicolor/scalable/apps/io.github.reedgraf.kanban.svg", mode = "644" },
     { source = "README.md", dest = "/usr/share/doc/kanban/README.md", mode = "644", doc = true },
 ]
 auto-req = "auto"

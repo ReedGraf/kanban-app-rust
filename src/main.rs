@@ -57,6 +57,7 @@ struct KanbanApp {
     pending: HashMap<u64, f64>,
     editor: Option<Editor>,
     renaming: Option<(usize, String)>,
+    focus_rename: bool,
     show_archive: bool,
     filter: String,
     dirty: bool,
@@ -72,6 +73,7 @@ impl KanbanApp {
             pending: HashMap::new(),
             editor: None,
             renaming: None,
+            focus_rename: false,
             show_archive: false,
             filter: String::new(),
             dirty: false,
@@ -130,7 +132,11 @@ impl KanbanApp {
             Action::DeleteCard(id) => {
                 b.take(id);
             }
-            Action::RenameColumn(ci) => self.renaming = Some((ci, b.columns[ci].title.clone())),
+            Action::RenameColumn(ci) => {
+                self.renaming = Some((ci, b.columns[ci].title.clone()));
+                self.focus_rename = true;
+                return;
+            }
             Action::DeleteColumn(ci) => {
                 let col = b.columns.remove(ci);
                 // Don't silently lose cards: archive them.
@@ -159,6 +165,7 @@ impl KanbanApp {
             if ui.button("➕ Column").clicked() {
                 self.board.add_column("New column");
                 self.renaming = Some((self.board.columns.len() - 1, "New column".into()));
+                self.focus_rename = true;
                 self.dirty = true;
             }
             ui.add(TextEdit::singleline(&mut self.filter).hint_text("🔍 Filter by text or tag").desired_width(200.0));
@@ -265,12 +272,17 @@ impl KanbanApp {
                 let renaming_this = matches!(&self.renaming, Some((i, _)) if *i == ci);
                 if renaming_this {
                     let (_, text) = self.renaming.as_mut().unwrap();
-                    let r = ui.add(TextEdit::singleline(text).desired_width(150.0));
-                    r.request_focus();
+                    let r = ui.add(TextEdit::singleline(text).id_salt(("rename", ci)).desired_width(150.0));
+                    // Grab focus only when renaming starts; doing it every frame would never let go.
+                    if std::mem::take(&mut self.focus_rename) {
+                        r.request_focus();
+                    }
+                    // Enter or clicking elsewhere saves, Esc cancels.
                     if r.lost_focus() {
                         let (_, text) = self.renaming.take().unwrap();
-                        if !text.trim().is_empty() {
-                            self.board.columns[ci].title = text.trim().to_string();
+                        let text = text.trim();
+                        if !text.is_empty() && !ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                            self.board.columns[ci].title = text.to_string();
                             self.dirty = true;
                         }
                     }
@@ -661,13 +673,73 @@ impl eframe::App for KanbanApp {
     }
 }
 
+const APP_ID: &str = "io.github.reedgraf.kanban";
+const ICON_PNG: &[u8] = include_bytes!("../assets/io.github.reedgraf.kanban.png");
+const ICON_SVG: &str = include_str!("../assets/io.github.reedgraf.kanban.svg");
+const DESKTOP_ENTRY: &str = include_str!("../assets/io.github.reedgraf.kanban.desktop");
+/// Marks launcher files the app wrote itself, so it never overwrites one a package or `make install` put there.
+const GENERATED_MARK: &str = "X-Kanban-Generated=true";
+
+/// Wayland has no way for an app to set its window icon: the compositor looks up the `.desktop`
+/// file named after the window's app id and uses its icon. When the binary is run without being
+/// installed, write a per-user launcher and icon to ~/.local/share so the icon shows up.
+fn ensure_desktop_entry() {
+    let Some(data_home) = dirs::data_dir() else { return };
+    let rel = format!("applications/{APP_ID}.desktop");
+    let system_dirs = std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
+    if system_dirs.split(':').filter(|d| !d.is_empty()).any(|d| std::path::Path::new(d).join(&rel).exists()) {
+        return; // installed from a package
+    }
+    let desktop_path = data_home.join(&rel);
+    let existing = std::fs::read_to_string(&desktop_path).ok();
+    if existing.as_ref().is_some_and(|e| !e.contains(GENERATED_MARK)) {
+        return; // installed with `make install PREFIX=~/.local`, or edited by the user
+    }
+    let Ok(exe) = std::env::current_exe() else { return };
+    // Desktop-entry quoting: `"`, `` ` ``, `$` and `\` get a backslash (doubled, since the value is
+    // itself unescaped once), and `%` becomes `%%`.
+    let mut exec = String::from("\"");
+    for c in exe.display().to_string().chars() {
+        match c {
+            '"' | '`' | '$' | '\\' => exec.extend(['\\', '\\', c]),
+            '%' => exec.push_str("%%"),
+            c => exec.push(c),
+        }
+    }
+    exec.push('"');
+    let icon_path = data_home.join(format!("icons/hicolor/scalable/apps/{APP_ID}.svg"));
+    // Use the icon's absolute path rather than its theme name: long-running shells (e.g. Plasma's
+    // taskbar) cache the icon theme at startup and won't see an icon folder created after that.
+    let entry = DESKTOP_ENTRY
+        .replace("Exec=kanban", &format!("Exec={exec}"))
+        .replace(&format!("Icon={APP_ID}"), &format!("Icon={}", icon_path.display()))
+        + GENERATED_MARK
+        + "\n";
+    let write = |path: &std::path::Path, contents: &str| -> std::io::Result<()> {
+        if std::fs::read_to_string(path).ok().as_deref() != Some(contents) {
+            std::fs::create_dir_all(path.parent().unwrap())?;
+            std::fs::write(path, contents)?;
+        }
+        Ok(())
+    };
+    if let Err(e) = write(&icon_path, ICON_SVG).and_then(|_| write(&desktop_path, &entry)) {
+        eprintln!("kanban: could not install desktop entry: {e}");
+    }
+}
+
 fn main() -> eframe::Result {
+    ensure_desktop_entry();
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("Kanban")
+        .with_app_id(APP_ID)
+        .with_inner_size([1100.0, 700.0])
+        .with_min_inner_size([500.0, 350.0]);
+    // Used on X11 and other platforms; Wayland relies on the desktop entry above.
+    if let Ok(icon) = eframe::icon_data::from_png_bytes(ICON_PNG) {
+        viewport = viewport.with_icon(icon);
+    }
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("Kanban")
-            .with_app_id("kanban")
-            .with_inner_size([1100.0, 700.0])
-            .with_min_inner_size([500.0, 350.0]),
+        viewport,
         ..Default::default()
     };
     eframe::run_native("Kanban", options, Box::new(|cc| Ok(Box::new(KanbanApp::new(cc)))))
@@ -750,5 +822,60 @@ mod tests {
         h.press(p, true);
         h.press(p, false);
         assert!(h.actions.iter().any(|a| matches!(a, Action::Edit(_))));
+    }
+
+    fn app() -> KanbanApp {
+        KanbanApp {
+            board: Board::default(),
+            pending: HashMap::new(),
+            editor: None,
+            renaming: None,
+            focus_rename: false,
+            show_archive: false,
+            filter: String::new(),
+            dirty: false,
+        }
+    }
+
+    fn app_frame(ctx: &egui::Context, app: &mut KanbanApp, events: Vec<Event>) {
+        let mut actions = Vec::new();
+        let mut out = ctx.run_ui(RawInput { events, ..Default::default() }, |ui| {
+            egui::CentralPanel::default_margins().show(ui, |ui| app.board_ui(ui, 0.0, &mut actions));
+        });
+        out.textures_delta.clear();
+        for a in actions {
+            app.apply(a);
+        }
+    }
+
+    fn key(k: egui::Key) -> Event {
+        Event::Key { key: k, physical_key: None, pressed: true, repeat: false, modifiers: Default::default() }
+    }
+
+    #[test]
+    fn rename_saves_on_enter_and_releases_focus() {
+        let ctx = egui::Context::default();
+        let mut a = app();
+        a.apply(Action::RenameColumn(0));
+        app_frame(&ctx, &mut a, vec![]);
+        app_frame(&ctx, &mut a, vec![Event::Text("!".into())]);
+        app_frame(&ctx, &mut a, vec![key(egui::Key::Enter)]);
+        app_frame(&ctx, &mut a, vec![]);
+        assert!(a.renaming.is_none(), "rename box should close");
+        assert_eq!(a.board.columns[0].title, "To do!");
+        assert!(ctx.memory(|m| m.focused()).is_none(), "focus should be released");
+    }
+
+    #[test]
+    fn rename_escape_cancels() {
+        let ctx = egui::Context::default();
+        let mut a = app();
+        a.apply(Action::RenameColumn(0));
+        app_frame(&ctx, &mut a, vec![]);
+        app_frame(&ctx, &mut a, vec![Event::Text("xyz".into())]);
+        app_frame(&ctx, &mut a, vec![key(egui::Key::Escape)]);
+        app_frame(&ctx, &mut a, vec![]);
+        assert!(a.renaming.is_none());
+        assert_eq!(a.board.columns[0].title, "To do");
     }
 }

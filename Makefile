@@ -8,13 +8,13 @@ build:
 
 install: build
 	install -Dm755 target/release/kanban $(DESTDIR)$(PREFIX)/bin/kanban
-	install -Dm644 assets/kanban.desktop $(DESTDIR)$(PREFIX)/share/applications/kanban.desktop
-	install -Dm644 assets/kanban.svg $(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/kanban.svg
+	install -Dm644 assets/io.github.reedgraf.kanban.desktop $(DESTDIR)$(PREFIX)/share/applications/io.github.reedgraf.kanban.desktop
+	install -Dm644 assets/io.github.reedgraf.kanban.svg $(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/io.github.reedgraf.kanban.svg
 
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/kanban \
-	      $(DESTDIR)$(PREFIX)/share/applications/kanban.desktop \
-	      $(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/kanban.svg
+	      $(DESTDIR)$(PREFIX)/share/applications/io.github.reedgraf.kanban.desktop \
+	      $(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/io.github.reedgraf.kanban.svg
 
 # Debian / Ubuntu / Mint / Pop!_OS  -> target/debian/*.deb
 deb:
