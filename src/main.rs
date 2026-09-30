@@ -8,8 +8,6 @@ use jiff::{Zoned, civil::Date};
 use model::{Board, Card, SortMode, ThemeChoice};
 use std::collections::HashMap;
 
-/// How long a checked-off card lingers (faded out) before moving to the archive.
-const ARCHIVE_DELAY: f64 = 2.5;
 const COLUMN_WIDTH: f32 = 290.0;
 
 const PALETTE: [(&str, [u8; 3]); 8] = [
@@ -61,14 +59,20 @@ struct KanbanApp {
     show_archive: bool,
     filter: String,
     dirty: bool,
+    /// Archive retention being edited in settings, applied with a button.
+    days_draft: u32,
+    /// A retention reduction waiting for the user to confirm deleting old cards.
+    confirm_days: Option<u32>,
 }
 
 impl KanbanApp {
     fn new(cc: &eframe::CreationContext) -> Self {
-        let board = Board::load();
+        let mut board = Board::load();
+        board.prune_archive();
         apply_theme(&cc.egui_ctx, board.theme);
         cc.egui_ctx.all_styles_mut(|s| s.spacing.item_spacing = Vec2::new(8.0, 6.0));
         Self {
+            days_draft: board.archive_days,
             board,
             pending: HashMap::new(),
             editor: None,
@@ -77,6 +81,7 @@ impl KanbanApp {
             show_archive: false,
             filter: String::new(),
             dirty: false,
+            confirm_days: None,
         }
     }
 
@@ -182,6 +187,29 @@ impl KanbanApp {
                         }
                     }
                     ui.separator();
+                    ui.label(RichText::new("Checked-off cards").strong());
+                    ui.horizontal(|ui| {
+                        ui.label("Move to archive after");
+                        let r = ui.add(egui::DragValue::new(&mut self.board.check_delay).range(0.0..=60.0).speed(0.1).suffix(" s"));
+                        self.dirty |= r.changed();
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Keep in archive for");
+                        ui.add(egui::DragValue::new(&mut self.days_draft).range(0..=3650).suffix(" days"));
+                        let current = self.board.archive_days;
+                        if self.days_draft != current && ui.button("Apply").clicked() {
+                            // Shorter limit (or going from "forever" to a limit) deletes old cards: confirm first.
+                            let reducing = self.days_draft != 0 && (current == 0 || self.days_draft < current);
+                            if reducing {
+                                self.confirm_days = Some(self.days_draft);
+                            } else {
+                                self.board.archive_days = self.days_draft;
+                                self.dirty = true;
+                            }
+                        }
+                    });
+                    ui.weak("0 days = keep forever");
+                    ui.separator();
                     ui.weak(format!("Data file:\n{}", Board::path().display()));
                     ui.separator();
                     ui.label(RichText::new("About").strong());
@@ -193,6 +221,33 @@ impl KanbanApp {
                 ui.toggle_value(&mut self.show_archive, label);
             });
         });
+    }
+
+    fn confirm_days_modal(&mut self, ctx: &egui::Context) {
+        let Some(days) = self.confirm_days else { return };
+        let n = self.board.expired_count(days);
+        let r = egui::Modal::new(Id::new("confirm_days")).show(ctx, |ui| {
+            ui.heading("Shorten archive time?");
+            ui.label(format!("Archived cards older than {days} days will be deleted permanently."));
+            ui.label(RichText::new(format!("{n} card(s) will be deleted now.")).strong());
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if ui.button("Delete and apply").clicked() {
+                    self.board.archive_days = days;
+                    self.board.prune_archive();
+                    self.dirty = true;
+                    self.confirm_days = None;
+                }
+                if ui.button("Cancel").clicked() {
+                    self.days_draft = self.board.archive_days;
+                    self.confirm_days = None;
+                }
+            });
+        });
+        if r.should_close() && self.confirm_days.is_some() {
+            self.days_draft = self.board.archive_days;
+            self.confirm_days = None;
+        }
     }
 
     fn archive_panel(&mut self, ui: &mut egui::Ui) {
@@ -253,7 +308,8 @@ impl KanbanApp {
     fn column_ui(&mut self, ui: &mut egui::Ui, ci: usize, ncols: usize, now: f64, today: Date, actions: &mut Vec<Action>) {
         let height = ui.available_height();
         let stroke = match self.board.columns[ci].color {
-            Some(c) => Stroke::new(2.5, rgb(c)),
+            // Blend toward the background so the border is a tint, not a highlighter.
+            Some(c) => Stroke::new(2.0, rgb(c).lerp_to_gamma(ui.visuals().faint_bg_color, 0.45)),
             None => ui.visuals().widgets.noninteractive.bg_stroke,
         };
         let frame = Frame::new()
@@ -358,7 +414,7 @@ impl KanbanApp {
                     if !self.matches_filter(card) {
                         continue;
                     }
-                    let progress = self.pending.get(&card.id).map(|t| ((now - t) / ARCHIVE_DELAY).clamp(0.0, 1.0) as f32);
+                    let progress = self.pending.get(&card.id).map(|t| ((now - t) / self.board.check_delay.max(0.01)).clamp(0.0, 1.0) as f32);
                     let resp = card_ui(ui, card, progress, today, actions);
                     // Dropping onto a card inserts before it (only meaningful when manually ordered).
                     if manual && let Some(p) = resp.dnd_release_payload::<DragCard>() && p.0 != card.id {
@@ -627,7 +683,7 @@ impl eframe::App for KanbanApp {
         let now = ctx.input(|i| i.time);
 
         // Move checked-off cards to the archive once their delay has passed.
-        let due: Vec<u64> = self.pending.iter().filter(|(_, t)| now - **t >= ARCHIVE_DELAY).map(|(id, _)| *id).collect();
+        let due: Vec<u64> = self.pending.iter().filter(|(_, t)| now - **t >= self.board.check_delay).map(|(id, _)| *id).collect();
         for id in due {
             self.pending.remove(&id);
             self.board.archive_card(id);
@@ -648,6 +704,7 @@ impl eframe::App for KanbanApp {
         let mut actions = Vec::new();
         egui::CentralPanel::default_margins().show(ui, |ui| self.board_ui(ui, now, &mut actions));
         self.editor_window(&ctx);
+        self.confirm_days_modal(&ctx);
 
         for a in actions {
             self.apply(a);
@@ -834,7 +891,26 @@ mod tests {
             show_archive: false,
             filter: String::new(),
             dirty: false,
+            days_draft: 0,
+            confirm_days: None,
         }
+    }
+
+    #[test]
+    fn archive_retention() {
+        let mut b = Board::default();
+        for days_ago in [1, 10] {
+            b.archive.push(model::Archived {
+                card: Card::default(),
+                column: "x".into(),
+                archived_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(24 * days_ago),
+            });
+        }
+        assert_eq!(b.expired_count(0), 0, "0 = keep forever");
+        assert_eq!(b.expired_count(5), 1);
+        b.archive_days = 5;
+        b.prune_archive();
+        assert_eq!(b.archive.len(), 1);
     }
 
     fn app_frame(ctx: &egui::Context, app: &mut KanbanApp, events: Vec<Event>) {

@@ -99,11 +99,28 @@ pub struct Board {
     pub columns: Vec<Column>,
     #[serde(default)]
     pub archive: Vec<Archived>,
+    /// Archived cards older than this many days are deleted. 0 = keep forever.
+    #[serde(default)]
+    pub archive_days: u32,
+    /// Seconds a checked-off card lingers before moving to the archive.
+    #[serde(default = "default_check_delay")]
+    pub check_delay: f64,
+}
+
+fn default_check_delay() -> f64 {
+    2.5
 }
 
 impl Default for Board {
     fn default() -> Self {
-        let mut b = Board { theme: ThemeChoice::Dark, next_id: 1, columns: vec![], archive: vec![] };
+        let mut b = Board {
+            theme: ThemeChoice::Dark,
+            next_id: 1,
+            columns: vec![],
+            archive: vec![],
+            archive_days: 0,
+            check_delay: default_check_delay(),
+        };
         for t in ["To do", "In progress", "Done"] {
             b.add_column(t);
         }
@@ -138,7 +155,18 @@ impl Board {
         if let Some((ci, card)) = self.take(card_id) {
             let column = self.columns[ci].title.clone();
             self.archive.insert(0, Archived { card, column, archived_at: Timestamp::now() });
+            self.prune_archive();
         }
+    }
+
+    /// How many archived cards a limit of `days` would delete (0 = keep forever).
+    pub fn expired_count(&self, days: u32) -> usize {
+        self.archive.iter().filter(|a| expired(a, days)).count()
+    }
+
+    pub fn prune_archive(&mut self) {
+        let days = self.archive_days;
+        self.archive.retain(|a| !expired(a, days));
     }
 
     /// Put an archived card back into the column it came from (or the first column).
@@ -181,4 +209,8 @@ impl Board {
             eprintln!("kanban: failed to save {}: {e}", path.display());
         }
     }
+}
+
+fn expired(a: &Archived, days: u32) -> bool {
+    days > 0 && Timestamp::now().duration_since(a.archived_at).as_secs() > i64::from(days) * 86_400
 }
