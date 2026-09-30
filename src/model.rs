@@ -1,8 +1,9 @@
+use egui::ThemePreference;
 use jiff::{Timestamp, civil::Date};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default, Debug)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SortMode {
     #[default]
     Manual,
@@ -22,41 +23,18 @@ impl SortMode {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default, Debug)]
-pub enum ThemeChoice {
-    System,
-    #[default]
-    Dark,
-    Light,
-}
-
-impl ThemeChoice {
-    pub const ALL: [ThemeChoice; 3] = [ThemeChoice::System, ThemeChoice::Dark, ThemeChoice::Light];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            ThemeChoice::System => "Follow system",
-            ThemeChoice::Dark => "Dark",
-            ThemeChoice::Light => "Light",
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Default, Debug)]
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
 pub struct Card {
     pub id: u64,
     pub title: String,
-    #[serde(default)]
     pub description: String,
-    #[serde(default)]
     pub due: Option<Date>,
-    #[serde(default)]
     pub color: Option<[u8; 3]>,
-    #[serde(default)]
     pub tags: Vec<String>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize)]
 pub struct Column {
     pub id: u64,
     pub title: String,
@@ -84,42 +62,35 @@ impl Column {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize)]
 pub struct Archived {
     pub card: Card,
     pub column: String,
     pub archived_at: Timestamp,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize)]
+#[serde(default)]
 pub struct Board {
-    #[serde(default)]
-    pub theme: ThemeChoice,
+    pub theme: ThemePreference,
     pub next_id: u64,
     pub columns: Vec<Column>,
-    #[serde(default)]
     pub archive: Vec<Archived>,
     /// Archived cards older than this many days are deleted. 0 = keep forever.
-    #[serde(default)]
     pub archive_days: u32,
     /// Seconds a checked-off card lingers before moving to the archive.
-    #[serde(default = "default_check_delay")]
     pub check_delay: f64,
-}
-
-fn default_check_delay() -> f64 {
-    2.5
 }
 
 impl Default for Board {
     fn default() -> Self {
         let mut b = Board {
-            theme: ThemeChoice::Dark,
+            theme: ThemePreference::Dark,
             next_id: 1,
             columns: vec![],
             archive: vec![],
             archive_days: 0,
-            check_delay: default_check_delay(),
+            check_delay: 2.5,
         };
         for t in ["To do", "In progress", "Done"] {
             b.add_column(t);
@@ -154,9 +125,13 @@ impl Board {
     pub fn archive_card(&mut self, card_id: u64) {
         if let Some((ci, card)) = self.take(card_id) {
             let column = self.columns[ci].title.clone();
-            self.archive.insert(0, Archived { card, column, archived_at: Timestamp::now() });
-            self.prune_archive();
+            self.push_archive(card, column);
         }
+    }
+
+    pub fn push_archive(&mut self, card: Card, column: String) {
+        self.archive.insert(0, Archived { card, column, archived_at: Timestamp::now() });
+        self.prune_archive();
     }
 
     /// How many archived cards a limit of `days` would delete (0 = keep forever).

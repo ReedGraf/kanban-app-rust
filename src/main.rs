@@ -5,7 +5,7 @@ use eframe::{emath, egui::{
     Stroke, TextEdit, Vec2,
 }};
 use jiff::{Zoned, civil::Date};
-use model::{Board, Card, SortMode, ThemeChoice};
+use model::{Board, Card, SortMode};
 use std::collections::HashMap;
 
 const COLUMN_WIDTH: f32 = 290.0;
@@ -45,7 +45,6 @@ struct Editor {
     tags: String,
     has_due: bool,
     due: Date,
-    is_new: bool,
     col: usize,
 }
 
@@ -69,7 +68,7 @@ impl KanbanApp {
     fn new(cc: &eframe::CreationContext) -> Self {
         let mut board = Board::load();
         board.prune_archive();
-        apply_theme(&cc.egui_ctx, board.theme);
+        cc.egui_ctx.set_theme(board.theme);
         cc.egui_ctx.all_styles_mut(|s| s.spacing.item_spacing = Vec2::new(8.0, 6.0));
         Self {
             days_draft: board.archive_days,
@@ -110,7 +109,6 @@ impl KanbanApp {
                         has_due: card.due.is_some(),
                         due: card.due.unwrap_or_else(today),
                         card,
-                        is_new: false,
                         col: ci,
                     });
                 }
@@ -123,7 +121,6 @@ impl KanbanApp {
                     tags: String::new(),
                     has_due: false,
                     due: today(),
-                    is_new: true,
                     col: ci,
                 });
             }
@@ -146,11 +143,7 @@ impl KanbanApp {
                 let col = b.columns.remove(ci);
                 // Don't silently lose cards: archive them.
                 for card in col.cards {
-                    b.archive.insert(0, model::Archived {
-                        card,
-                        column: col.title.clone(),
-                        archived_at: jiff::Timestamp::now(),
-                    });
+                    b.push_archive(card, col.title.clone());
                 }
             }
             Action::ShiftColumn(ci, d) => {
@@ -180,11 +173,11 @@ impl KanbanApp {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.menu_button("⚙ Settings", |ui| {
                     ui.label(RichText::new("Theme").strong());
-                    for t in ThemeChoice::ALL {
-                        if ui.radio_value(&mut self.board.theme, t, t.label()).clicked() {
-                            apply_theme(ui.ctx(), t);
-                            self.dirty = true;
-                        }
+                    let before = self.board.theme;
+                    self.board.theme.radio_buttons(ui);
+                    if self.board.theme != before {
+                        ui.ctx().set_theme(self.board.theme);
+                        self.dirty = true;
                     }
                     ui.separator();
                     ui.label(RichText::new("Checked-off cards").strong());
@@ -365,21 +358,7 @@ impl KanbanApp {
                         }
                         ui.separator();
                         ui.label("Border color");
-                        ui.horizontal(|ui| {
-                            let col = &mut self.board.columns[ci];
-                            if ui.selectable_label(col.color.is_none(), "None").clicked() {
-                                col.color = None;
-                                self.dirty = true;
-                            }
-                            for (name, c) in PALETTE {
-                                let selected = col.color == Some(c);
-                                let text = RichText::new(if selected { "⏺" } else { "⬤" }).color(rgb(c)).size(18.0);
-                                if ui.add(egui::Button::new(text).frame(selected)).on_hover_text(name).clicked() {
-                                    col.color = Some(c);
-                                    self.dirty = true;
-                                }
-                            }
-                        });
+                        self.dirty |= color_picker(ui, &mut self.board.columns[ci].color);
                         ui.separator();
                         if ui.button("Delete column (archives its cards)").clicked() {
                             actions.push(Action::DeleteColumn(ci));
@@ -446,9 +425,10 @@ impl KanbanApp {
 
     fn editor_window(&mut self, ctx: &egui::Context) {
         let Some(ed) = &mut self.editor else { return };
+        let is_new = self.board.find(ed.card.id).is_none();
         let mut open = true;
         let mut result: Option<bool> = None; // Some(true)=save, Some(false)=delete
-        let title = if ed.is_new { "New card" } else { "Edit card" };
+        let title = if is_new { "New card" } else { "Edit card" };
         egui::Window::new(title)
             .open(&mut open)
             .collapsible(false)
@@ -459,7 +439,7 @@ impl KanbanApp {
                 egui::Grid::new("editor").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
                     ui.label("Title");
                     let r = ui.add(TextEdit::singleline(&mut ed.card.title).desired_width(280.0));
-                    if ed.is_new && ed.card.title.is_empty() && !r.has_focus() {
+                    if is_new && ed.card.title.is_empty() && !r.has_focus() {
                         r.request_focus();
                     }
                     ui.end_row();
@@ -478,16 +458,7 @@ impl KanbanApp {
                     ui.end_row();
 
                     ui.label("Color");
-                    ui.horizontal_wrapped(|ui| {
-                        ui.selectable_value(&mut ed.card.color, None, "None");
-                        for (name, c) in PALETTE {
-                            let selected = ed.card.color == Some(c);
-                            let text = RichText::new(if selected { "⏺" } else { "⬤" }).color(rgb(c)).size(18.0);
-                            if ui.add(egui::Button::new(text).frame(selected)).on_hover_text(name).clicked() {
-                                ed.card.color = Some(c);
-                            }
-                        }
-                    });
+                    color_picker(ui, &mut ed.card.color);
                     ui.end_row();
 
                     ui.label("Tags");
@@ -502,7 +473,7 @@ impl KanbanApp {
                     {
                         result = Some(true);
                     }
-                    if !ed.is_new && ui.button("🗑 Delete").clicked() {
+                    if !is_new && ui.button("🗑 Delete").clicked() {
                         result = Some(false);
                     }
                     ui.weak("Ctrl+Enter to save");
@@ -537,12 +508,20 @@ impl KanbanApp {
     }
 }
 
-fn apply_theme(ctx: &egui::Context, t: ThemeChoice) {
-    ctx.set_theme(match t {
-        ThemeChoice::System => egui::ThemePreference::System,
-        ThemeChoice::Dark => egui::ThemePreference::Dark,
-        ThemeChoice::Light => egui::ThemePreference::Light,
+/// "None" plus the palette swatches. Returns whether the color changed.
+fn color_picker(ui: &mut egui::Ui, color: &mut Option<[u8; 3]>) -> bool {
+    let before = *color;
+    ui.horizontal_wrapped(|ui| {
+        ui.selectable_value(color, None, "None");
+        for (name, c) in PALETTE {
+            let selected = *color == Some(c);
+            let text = RichText::new(if selected { "⏺" } else { "⬤" }).color(rgb(c)).size(18.0);
+            if ui.add(egui::Button::new(text).frame(selected)).on_hover_text(name).clicked() {
+                *color = Some(c);
+            }
+        }
     });
+    *color != before
 }
 
 fn today() -> Date {
@@ -894,6 +873,19 @@ mod tests {
             days_draft: 0,
             confirm_days: None,
         }
+    }
+
+    #[test]
+    fn loads_old_board_format() {
+        // Saved before the settings existed: no archive_days/check_delay, card with only id+title.
+        let b: Board = serde_json::from_str(
+            r#"{"theme":"Light","next_id":5,"columns":[{"id":1,"title":"A","cards":[{"id":2,"title":"x"}]}]}"#,
+        )
+        .unwrap();
+        assert_eq!(b.theme, egui::ThemePreference::Light);
+        assert_eq!((b.archive_days, b.check_delay, b.next_id), (0, 2.5, 5));
+        assert_eq!(b.columns.len(), 1);
+        assert_eq!(b.columns[0].cards[0].title, "x");
     }
 
     #[test]

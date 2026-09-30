@@ -11,6 +11,7 @@ repository = "https://github.com/ReedGraf/kanban-app-rust"
 [dependencies]
 dirs = "7.0.0"
 eframe = "0.36.2"
+egui = { version = "0.36.2", features = ["serde"] }
 egui_extras = { version = "0.36.2", features = ["datepicker"] }
 jiff = { version = "0.2.37", features = ["serde"] }
 serde = { version = "1.0.229", features = ["derive"] }
